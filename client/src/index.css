@@ -1,3 +1,30 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-slate-200 antialiased overflow-hidden;
+  }
+}
+
+@layer components {
+  /* The Key to Modern UI: Glassmorphism */
+  .glass-panel {
+    @apply bg-background-paper/60 backdrop-blur-xl border border-white/5 shadow-glass;
+  }
+  
+  /* Smooth Transitions for everything */
+  .transition-smooth {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  /* Hide Scrollbar for clean video grids */
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
