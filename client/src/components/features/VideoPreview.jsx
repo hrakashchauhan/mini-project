@@ -47,8 +47,8 @@ const VideoPreview = ({ onJoin }) => {
 
     // Cleanup: Stop stream on unmount
     return () => {
-      if (userStream) {
-        userStream.getTracks().forEach(track => track.stop());
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
       }
     };
   }, []);

@@ -7,77 +7,65 @@ require('dotenv').config();
 const app = express();
 const httpServer = createServer(app);
 
-// 1. Configured CORS for security
-app.use(cors({
-  origin: "http://localhost:5173", // Your Client URL
-  methods: ["GET", "POST"]
-}));
+// Allow connections from your Vite Client
+app.use(cors({ origin: "http://localhost:5173", methods: ["GET", "POST"] }));
 
-// 2. Initialize Socket.IO
 const io = new Server(httpServer, {
-  cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "http://localhost:5173", methods: ["GET", "POST"] }
 });
 
-// 3. The "State"
-const rooms = {}; 
-const socketToRoom = {}; 
+// Mapping to track users
+const socketToRoom = {};
+const users = {};
 
 io.on('connection', (socket) => {
-  console.log('🔌 New Client:', socket.id);
+  console.log('🔌 Connection:', socket.id);
 
+  // 1. User Joins Room
   socket.on('join-room', ({ roomId, username, role }) => {
-    if (!rooms[roomId]) rooms[roomId] = [];
-    rooms[roomId].push(socket.id);
+    users[socket.id] = { username, role, roomId };
     socketToRoom[socket.id] = roomId;
     socket.join(roomId);
 
-    const otherUsers = rooms[roomId].filter(id => id !== socket.id);
+    // Get list of OTHER users in the room
+    const clients = Array.from(io.sockets.adapter.rooms.get(roomId) || []);
+    const otherUsers = clients.filter(id => id !== socket.id);
+
+    // Send list of existing users to the new person (so they can initiate calls)
     socket.emit('all-users', otherUsers);
-
-    socket.to(roomId).emit('user-joined', { 
-      callerId: socket.id, 
-      username, 
-      role 
-    });
-    console.log(`User ${username} joined room ${roomId}`);
+    console.log(`✅ ${username} joined ${roomId}`);
   });
 
-  socket.on('offer', (payload) => {
-    io.to(payload.userToCall).emit('offer', {
-      offer: payload.offer,
-      callerId: socket.id,
-      username: payload.username
+  // 2. Signaling: Sending Offer (Initiator)
+  socket.on('sending-signal', (payload) => {
+    io.to(payload.userToCall).emit('user-joined', { 
+      signal: payload.signal, 
+      callerId: payload.callerID,
+      userInfo: users[payload.callerID] // Send name/role for UI
     });
   });
 
-  socket.on('answer', (payload) => {
-    io.to(payload.callerId).emit('answer', {
-      answer: payload.answer,
-      responderId: socket.id
+  // 3. Signaling: Returning Answer (Receiver)
+  socket.on('returning-signal', (payload) => {
+    io.to(payload.callerID).emit('receiving-returned-signal', { 
+      signal: payload.signal, 
+      id: socket.id 
     });
   });
 
-  socket.on('ice-candidate', (payload) => {
-    io.to(payload.target).emit('ice-candidate', {
-      candidate: payload.candidate,
-      senderId: socket.id
-    });
-  });
-
+  // 4. Disconnect
   socket.on('disconnect', () => {
     const roomId = socketToRoom[socket.id];
-    if (roomId && rooms[roomId]) {
-      rooms[roomId] = rooms[roomId].filter(id => id !== socket.id);
+    if (roomId) {
       socket.to(roomId).emit('user-left', socket.id);
     }
-    console.log('❌ Client Disconnected:', socket.id);
+    delete users[socket.id];
+    delete socketToRoom[socket.id];
+    console.log('❌ Disconnect:', socket.id);
   });
 });
 
 const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => {
-  console.log(`🚀 Signaling Server running on port ${PORT}`);
+  console.log(`🚀 Server ready on port ${PORT}`);
 });
