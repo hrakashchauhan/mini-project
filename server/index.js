@@ -1,71 +1,98 @@
-const express = require('express');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
-require('dotenv').config();
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const http = require("http");
+const { Server } = require("socket.io");
+require("dotenv").config();
+
+const Session = require("./models/Session");
+const { registerClassroomSockets } = require("./sockets/classroom");
+const { registerFocusSockets } = require("./sockets/focus");
 
 const app = express();
-const httpServer = createServer(app);
-
-// Allow connections from your Vite Client
-app.use(cors({ origin: "http://localhost:5173", methods: ["GET", "POST"] }));
-
-const io = new Server(httpServer, {
-  cors: { origin: "http://localhost:5173", methods: ["GET", "POST"] }
-});
-
-// Mapping to track users
-const socketToRoom = {};
-const users = {};
-
-io.on('connection', (socket) => {
-  console.log('🔌 Connection:', socket.id);
-
-  // 1. User Joins Room
-  socket.on('join-room', ({ roomId, username, role }) => {
-    users[socket.id] = { username, role, roomId };
-    socketToRoom[socket.id] = roomId;
-    socket.join(roomId);
-
-    // Get list of OTHER users in the room
-    const clients = Array.from(io.sockets.adapter.rooms.get(roomId) || []);
-    const otherUsers = clients.filter(id => id !== socket.id);
-
-    // Send list of existing users to the new person (so they can initiate calls)
-    socket.emit('all-users', otherUsers);
-    console.log(`✅ ${username} joined ${roomId}`);
-  });
-
-  // 2. Signaling: Sending Offer (Initiator)
-  socket.on('sending-signal', (payload) => {
-    io.to(payload.userToCall).emit('user-joined', { 
-      signal: payload.signal, 
-      callerId: payload.callerID,
-      userInfo: users[payload.callerID] // Send name/role for UI
-    });
-  });
-
-  // 3. Signaling: Returning Answer (Receiver)
-  socket.on('returning-signal', (payload) => {
-    io.to(payload.callerID).emit('receiving-returned-signal', { 
-      signal: payload.signal, 
-      id: socket.id 
-    });
-  });
-
-  // 4. Disconnect
-  socket.on('disconnect', () => {
-    const roomId = socketToRoom[socket.id];
-    if (roomId) {
-      socket.to(roomId).emit('user-left', socket.id);
-    }
-    delete users[socket.id];
-    delete socketToRoom[socket.id];
-    console.log('❌ Disconnect:', socket.id);
-  });
-});
-
 const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, () => {
-  console.log(`🚀 Server ready on port ${PORT}`);
+
+const parseOrigins = (value) =>
+  value
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const allowedOrigins = process.env.CLIENT_ORIGINS
+  ? parseOrigins(process.env.CLIENT_ORIGINS)
+  : ["http://localhost:5173", "http://127.0.0.1:5173"];
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true,
+  }),
+);
+app.use(express.json());
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+  },
+});
+
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("Database connected"))
+  .catch((err) => console.error("DB error:", err));
+
+io.on("connection", (socket) => {
+  console.log(`New client connected: ${socket.id}`);
+
+  socket.on("join-room", (roomId) => {
+    socket.join(roomId);
+    console.log(`User ${socket.id} joined room: ${roomId}`);
+  });
+
+  registerClassroomSockets(io, socket);
+  registerFocusSockets(io, socket);
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+  });
+});
+
+app.get("/", (req, res) => res.send("FocusAI backend is live."));
+
+app.post("/api/create-session", async (req, res) => {
+  try {
+    const { teacherId } = req.body;
+    const sessionCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const newSession = new Session({ code: sessionCode, teacherId: teacherId });
+    await newSession.save();
+    res.json({ success: true, code: sessionCode });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post("/api/join-session", async (req, res) => {
+  try {
+    const { code, studentId } = req.body;
+    const session = await Session.findOne({ code: code.toUpperCase() });
+    if (!session)
+      return res
+        .status(404)
+        .json({ success: false, message: "Session not found" });
+
+    if (!session.participants.includes(studentId)) {
+      session.participants.push(studentId);
+      await session.save();
+    }
+    res.json({ success: true, message: "Joined!", code: session.code });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`Real-time server running on port ${PORT}`);
 });

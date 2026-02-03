@@ -1,8 +1,6 @@
-import io from 'socket.io-client';
-
-// Ensure this matches your server port
-const SOCKET_URL = 'http://localhost:5000'; 
+import { io } from "socket.io-client";
+import { SOCKET_URL } from "../config";
 
 export const socket = io(SOCKET_URL, {
-  autoConnect: false, // Wait until user clicks "Join"
+  autoConnect: false,
 });
